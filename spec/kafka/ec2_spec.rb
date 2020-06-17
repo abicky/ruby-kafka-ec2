@@ -1,6 +1,6 @@
-RSpec.describe Ruby::Kafka::Ec2 do
+RSpec.describe Kafka::EC2 do
   it "has a version number" do
-    expect(Ruby::Kafka::Ec2::VERSION).not_to be nil
+    expect(Kafka::EC2::VERSION).not_to be nil
   end
 
   it "does something useful" do

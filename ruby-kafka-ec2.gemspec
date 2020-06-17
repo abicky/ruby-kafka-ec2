@@ -1,8 +1,8 @@
-require_relative 'lib/ruby/kafka/ec2/version'
+require_relative 'lib/kafka/ec2/version'
 
 Gem::Specification.new do |spec|
   spec.name          = "ruby-kafka-ec2"
-  spec.version       = Ruby::Kafka::Ec2::VERSION
+  spec.version       = Kafka::EC2::VERSION
   spec.authors       = ["abicky"]
   spec.email         = ["takeshi.arabiki@gmail.com"]
 
