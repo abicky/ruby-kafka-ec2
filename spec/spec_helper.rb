@@ -1,5 +1,6 @@
 require "bundler/setup"
 require "kafka/ec2"
+require "webmock/rspec"
 
 RSpec.configure do |config|
   # Enable flags like --only-failures and --next-failure
@@ -11,4 +12,6 @@ RSpec.configure do |config|
   config.expect_with :rspec do |c|
     c.syntax = :expect
   end
+
+  config.filter_run_excluding kafka: true if ENV.fetch("KAFKA_TOPIC", "").empty?
 end
