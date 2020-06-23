@@ -10,7 +10,7 @@ module Kafka
     module Ext
       module Protocol
         module JoinGroupRequest
-          def initialize(*args, topics:, **kwargs)
+          def initialize(*args, topics: [], **kwargs)
             super
             if Kafka::EC2.assignment_strategy_classes[@group_id] == Kafka::EC2::MixedInstanceAssignmentStrategy
               user_data = Net::HTTP.start("169.254.169.254", 80) do |http|
