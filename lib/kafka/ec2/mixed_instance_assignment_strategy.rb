@@ -18,10 +18,16 @@ module Kafka
       #   is the availability zone and whose value is the weight. If the object is a proc,
       #   it must returns such a hash and the proc is called every time the method "assign"
       #   is called.
-      def initialize(cluster:, instance_family_weights:, availability_zone_weights:)
+      # @param weights [Hash{String => Hash{String => Numeric}}, Proc] a hash whose the key
+      #   is the availability zone or the instance family and whose value is the hash like
+      #   instance_family_weights or availability_zone_weights. If the object is a proc,
+      #   it must returns such a hash and the proc is called every time the method "assign"
+      #   is called.
+      def initialize(cluster:, instance_family_weights: {}, availability_zone_weights: {}, weights: {})
         @cluster = cluster
         @instance_family_weights = instance_family_weights
         @availability_zone_weights = availability_zone_weights
+        @weights = weights
       end
 
       # Assign the topic partitions to the group members.
@@ -38,12 +44,13 @@ module Kafka
 
         instance_family_to_capacity = @instance_family_weights.is_a?(Proc) ? @instance_family_weights.call() : @instance_family_weights
         az_to_capacity = @availability_zone_weights.is_a?(Proc) ? @availability_zone_weights.call() : @availability_zone_weights
+        weights = @weights.is_a?(Proc) ? @weights.call() : @weights
         members.each do |member_id|
           group_assignment[member_id] = Protocol::MemberAssignment.new
 
           instance_id, instance_type, az = member_id_to_metadata[member_id].split(",")
           instance_id_to_member_ids[instance_id] << member_id
-          capacity = calculate_capacity(instance_type, az, instance_family_to_capacity, az_to_capacity)
+          capacity = calculate_capacity(instance_type, az, instance_family_to_capacity, az_to_capacity, weights)
           instance_id_to_capacity[instance_id] += capacity
           total_capacity += capacity
         end
@@ -86,9 +93,11 @@ module Kafka
 
       private
 
-      def calculate_capacity(instance_type, az, instance_family_to_capacity, az_to_capacity)
+      def calculate_capacity(instance_type, az, instance_family_to_capacity, az_to_capacity, weights)
         instance_family, _ = instance_type.split(".")
-        instance_family_to_capacity.fetch(instance_family, 1) * az_to_capacity.fetch(az, 1)
+
+        capacity = weights.dig(az, instance_family) || weights.dig(instance_family, az)
+        capacity || instance_family_to_capacity.fetch(instance_family, 1) * az_to_capacity.fetch(az, 1)
       end
     end
   end

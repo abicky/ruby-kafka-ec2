@@ -7,7 +7,9 @@ module Kafka
     class MixedInstanceAssignmentStrategyFactory
       # @param instance_family_weights [Hash, Proc]
       # @param availability_zone_weights [Hash, Proc]
-      def initialize(instance_family_weights: {}, availability_zone_weights: {})
+      # @param weights [Hash, Proc]
+      # @see Kafka::EC2::MixedInstanceAssignmentStrategy#initialize
+      def initialize(instance_family_weights: {}, availability_zone_weights: {}, weights: {})
         @instance_family_weights = instance_family_weights
         @availability_zone_weights = availability_zone_weights
       end

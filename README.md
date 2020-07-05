@@ -77,6 +77,48 @@ consumer = Kafka::EC2.with_assignment_strategy_factory(assignment_strategy_facto
 end
 ```
 
+You can also specify weights for each combination of availability zones and instance families:
+
+```ruby
+assignment_strategy_factory = Kafka::EC2::MixedInstanceAssignmentStrategyFactory.new(
+  weights: ->() {
+    db_cluster = rds.describe_db_clusters(filters: [
+      { name: "db-cluster-id", values: [ENV["RDS_CLUSTER"]] },
+    ]).db_clusters.first
+    db_instance_id = db_cluster.db_cluster_members.find { |m| m.is_cluster_writer }.db_instance_identifier
+    db_instance = rds.describe_db_instances(filters: [
+      { name: "db-cluster-id", values: [ENV["RDS_CLUSTER"]] },
+      { name: "db-instance-id", values: [db_instance_id] },
+    ]).db_instances.first
+
+    weights_for_writer_az = {
+      "r4" => 1.00,
+      "r5" => 1.20,
+      "m5" => 1.35,
+      "c5" => 1.50,
+    }
+    weights_for_other_az = {
+      "r4" => 0.40,
+      "r5" => 0.70,
+      "m5" => 0.80,
+      "c5" => 1.00,
+    }
+    if db_instance.availability_zone == "ap-northeast-1a"
+      {
+        "ap-northeast-1a" => weights_for_writer_az,
+        "ap-northeast-1c" => weights_for_other_az,
+      }
+    else
+      {
+        "ap-northeast-1a" => weights_for_other_az,
+        "ap-northeast-1c" => weights_for_writer_az,,
+      }
+    end
+  },
+)
+```
+
+
 ## Development
 
 After checking out the repo, run `bin/setup` to install dependencies. Then, run `rake spec` to run the tests. You can also run `bin/console` for an interactive prompt that will allow you to experiment.
