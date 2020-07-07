@@ -12,6 +12,7 @@ module Kafka
       def initialize(instance_family_weights: {}, availability_zone_weights: {}, weights: {})
         @instance_family_weights = instance_family_weights
         @availability_zone_weights = availability_zone_weights
+        @weights = weights
       end
 
       def create(cluster:)
@@ -19,6 +20,7 @@ module Kafka
           cluster: cluster,
           instance_family_weights: @instance_family_weights,
           availability_zone_weights: @availability_zone_weights,
+          weights: @weights,
         )
       end
     end
