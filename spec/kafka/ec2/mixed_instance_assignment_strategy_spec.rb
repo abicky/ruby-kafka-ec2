@@ -39,7 +39,7 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
       end
 
       context "with various instances" do
-        let(:partition_ids) { (0 .. 499).to_a }
+        let(:partition_ids) { (0 .. 500).to_a }
         let(:member_id_to_metadata) do
           {
             # Instances which have two members
@@ -68,7 +68,7 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
         let(:expected_partition_count) do
           {
             "0000-c5-a-0000" => 33,
-            "0001-m5-a-0000" => 29,
+            "0001-m5-a-0000" => 30,
             "0002-r5-a-0000" => 28,
             "0003-r4-a-0000" => 26,
             "0004-c5-c-0000" => 29,
@@ -76,13 +76,13 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
             "0006-r5-c-0000" => 25,
             "0007-r4-c-0000" => 23,
             "0000-c5-a-0001" => 33,
-            "0001-m5-a-0001" => 29,
+            "0001-m5-a-0001" => 30,
             "0002-r5-a-0001" => 28,
             "0003-r4-a-0001" => 26,
             "0004-c5-c-0001" => 29,
             "0005-m5-c-0001" => 27,
             "0006-r5-c-0001" => 25,
-            "0007-r4-c-0001" => 24,
+            "0007-r4-c-0001" => 23,
             "1000-c5-a-0000" => 33,
             "1001-r4-a-0000" => 26,
           }
@@ -143,7 +143,7 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
       #   m5: 18 msec
       #   c5: 15 msec
 
-      let(:partition_ids) { (0 .. 499).to_a }
+      let(:partition_ids) { (0 .. 500).to_a }
       let(:member_id_to_metadata) do
         {
           # Instances which have two members
@@ -179,7 +179,7 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
           "0005-m5-c-0000" => 26,
           "0006-r5-c-0000" => 23,
           "0007-r4-c-0000" => 21,
-          "0000-c5-a-0001" => 35,
+          "0000-c5-a-0001" => 36,
           "0001-m5-a-0001" => 33,
           "0002-r5-a-0001" => 28,
           "0003-r4-a-0001" => 25,
