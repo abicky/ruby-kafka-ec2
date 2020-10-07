@@ -65,31 +65,32 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
           }
         end
 
-        it "assigns partitions to members considering their instance types and availability zones" do
-          expect(group_assignment.values.flat_map { |a| a.topics["topic"] }.compact.uniq.size).to eq partition_ids.size
-
+        let(:expected_partition_count) do
           {
             "0000-c5-a-0000" => 33,
-            "0001-m5-a-0000" => 30,
+            "0001-m5-a-0000" => 29,
             "0002-r5-a-0000" => 28,
             "0003-r4-a-0000" => 26,
-            "0004-c5-c-0000" => 30,
+            "0004-c5-c-0000" => 29,
             "0005-m5-c-0000" => 27,
-            "0006-r5-c-0000" => 26,
-            "0007-r4-c-0000" => 24,
-            "0000-c5-a-0001" => 32,
+            "0006-r5-c-0000" => 25,
+            "0007-r4-c-0000" => 23,
+            "0000-c5-a-0001" => 33,
             "0001-m5-a-0001" => 29,
             "0002-r5-a-0001" => 28,
             "0003-r4-a-0001" => 26,
             "0004-c5-c-0001" => 29,
-            "0005-m5-c-0001" => 26,
+            "0005-m5-c-0001" => 27,
             "0006-r5-c-0001" => 25,
-            "0007-r4-c-0001" => 23,
+            "0007-r4-c-0001" => 24,
             "1000-c5-a-0000" => 33,
-            "1001-r4-a-0000" => 25,
-          }.each do |member_id, parition_count|
-            expect(group_assignment[member_id].topics["topic"].size).to eq parition_count
-          end
+            "1001-r4-a-0000" => 26,
+          }
+        end
+
+        it "assigns partitions to members considering their instance types and availability zones" do
+          expect(group_assignment.values.flat_map { |a| a.topics["topic"] }.compact.uniq.size).to eq partition_ids.size
+          expect(group_assignment.map { |id, a| [id, a.topics["topic"].size] }.to_h).to eq(expected_partition_count)
         end
       end
 
@@ -172,7 +173,7 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
         {
           "0000-c5-a-0000" => 36,
           "0001-m5-a-0000" => 33,
-          "0002-r5-a-0000" => 29,
+          "0002-r5-a-0000" => 28,
           "0003-r4-a-0000" => 25,
           "0004-c5-c-0000" => 28,
           "0005-m5-c-0000" => 26,
@@ -187,7 +188,7 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
           "0006-r5-c-0001" => 23,
           "0007-r4-c-0001" => 21,
           "1000-c5-a-0000" => 36,
-          "1001-r4-a-0000" => 24,
+          "1001-r4-a-0000" => 25,
         }
       end
 
@@ -244,6 +245,75 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
         end
 
         it "assigns partitions to members considering their instance types and availability zones" do
+          expect(group_assignment.values.flat_map { |a| a.topics["topic"] }.compact.uniq.size).to eq partition_ids.size
+          expect(group_assignment.map { |id, a| [id, a.topics["topic"].size] }.to_h).to eq(expected_partition_count)
+        end
+      end
+    end
+
+    context "with partition_weights" do
+      let(:partition_ids) { (0 .. 99).to_a }
+      let(:member_id_to_metadata) do
+        {
+          "0000-c5-a-0000" => "i-00000000000000000,c5.xlarge,ap-northeast-1a",
+          "0001-m5-a-0000" => "i-00000000000000001,m5.xlarge,ap-northeast-1a",
+          "0002-r5-a-0000" => "i-00000000000000001,r5.xlarge,ap-northeast-1a",
+          "0003-c5-c-0000" => "i-00000000000000004,c5.xlarge,ap-northeast-1c",
+          "0004-m5-c-0000" => "i-00000000000000005,m5.xlarge,ap-northeast-1c",
+        }
+      end
+
+      let(:expected_partition_count) do
+        {
+          "0000-c5-a-0000" => 16,
+          "0001-m5-a-0000" => 21,
+          "0002-r5-a-0000" => 21,
+          "0003-c5-c-0000" => 21,
+          "0004-m5-c-0000" => 21,
+        }
+      end
+
+      context "with partition_weights hash" do
+        let(:strategy) do
+          described_class.new(
+            cluster: cluster,
+            partition_weights: {
+              "topic" => {
+                0 => 2,
+                1 => 2,
+                2 => 2,
+                3 => 2,
+                4 => 2,
+              }
+            }
+          )
+        end
+
+        it "assigns partitions to members considering partition weights" do
+          expect(group_assignment.values.flat_map { |a| a.topics["topic"] }.compact.uniq.size).to eq partition_ids.size
+          expect(group_assignment.map { |id, a| [id, a.topics["topic"].size] }.to_h).to eq(expected_partition_count)
+        end
+      end
+
+      context "with partition_weights proc" do
+        let(:strategy) do
+          described_class.new(
+            cluster: cluster,
+            partition_weights: ->() {
+              {
+                "topic" => {
+                  0 => 2,
+                  1 => 2,
+                  2 => 2,
+                  3 => 2,
+                  4 => 2,
+                }
+              }
+            }
+          )
+        end
+
+        it "assigns partitions to members considering partition weights" do
           expect(group_assignment.values.flat_map { |a| a.topics["topic"] }.compact.uniq.size).to eq partition_ids.size
           expect(group_assignment.map { |id, a| [id, a.topics["topic"].size] }.to_h).to eq(expected_partition_count)
         end

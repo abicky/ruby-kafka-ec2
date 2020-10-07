@@ -9,10 +9,11 @@ module Kafka
       # @param availability_zone_weights [Hash, Proc]
       # @param weights [Hash, Proc]
       # @see Kafka::EC2::MixedInstanceAssignmentStrategy#initialize
-      def initialize(instance_family_weights: {}, availability_zone_weights: {}, weights: {})
+      def initialize(instance_family_weights: {}, availability_zone_weights: {}, weights: {}, partition_weights: {})
         @instance_family_weights = instance_family_weights
         @availability_zone_weights = availability_zone_weights
         @weights = weights
+        @partition_weights = partition_weights
       end
 
       def create(cluster:)
@@ -21,6 +22,7 @@ module Kafka
           instance_family_weights: @instance_family_weights,
           availability_zone_weights: @availability_zone_weights,
           weights: @weights,
+          partition_weights: @partition_weights,
         )
       end
     end

@@ -23,11 +23,12 @@ module Kafka
       #   instance_family_weights or availability_zone_weights. If the object is a proc,
       #   it must returns such a hash and the proc is called every time the method "assign"
       #   is called.
-      def initialize(cluster:, instance_family_weights: {}, availability_zone_weights: {}, weights: {})
+      def initialize(cluster:, instance_family_weights: {}, availability_zone_weights: {}, weights: {}, partition_weights: {})
         @cluster = cluster
         @instance_family_weights = instance_family_weights
         @availability_zone_weights = availability_zone_weights
         @weights = weights
+        @partition_weights = partition_weights
       end
 
       # Assign the topic partitions to the group members.
@@ -64,24 +65,35 @@ module Kafka
           Array.new(partitions.count) { topic }.zip(partitions)
         end
 
-        partition_count_per_capacity = topic_partitions.size / total_capacity
-        last_index = 0
-        instance_id_to_capacity.sort_by { |_, capacity| -capacity }.each do |instance_id, capacity|
-          partition_count = (capacity * partition_count_per_capacity).round
-          member_ids = instance_id_to_member_ids[instance_id]
-          topic_partitions[last_index, partition_count]&.each_with_index do |(topic, partition), index|
-            member_id = member_ids[index % member_ids.size]
-            group_assignment[member_id].assign(topic, [partition])
-          end
+        partition_weights = build_partition_weights(topics)
+        partition_weight_per_capacity = topic_partitions.sum { |topic, partition| partition_weights.dig(topic, partition) } / total_capacity
 
-          last_index += partition_count
+        last_index = 0
+        member_id_to_acceptable_partition_weight = {}
+        instance_id_to_capacity.each do |instance_id, capacity|
+          member_ids = instance_id_to_member_ids[instance_id]
+          member_ids.each do |member_id|
+            acceptable_partition_weight = capacity * partition_weight_per_capacity / member_ids.size
+            loop do
+              topic, partition = topic_partitions[last_index]
+              partition_weight = partition_weights.dig(topic, partition)
+              if last_index == topic_partitions.size || acceptable_partition_weight - partition_weight < 0
+                member_id_to_acceptable_partition_weight[member_id] = acceptable_partition_weight
+                break
+              end
+
+              group_assignment[member_id].assign(topic, [partition])
+              last_index += 1
+              acceptable_partition_weight -= partition_weight
+            end
+          end
         end
 
         if last_index < topic_partitions.size
-          member_ids = instance_id_to_member_ids.values.flatten
-          topic_partitions[last_index, topic_partitions.size].each_with_index do |(topic, partition), index|
-            member_id = member_ids[index % member_ids.size]
+          member_id_to_acceptable_partition_weight.sort_by { |_, remaining| -remaining }.each do |member_id, _|
+            topic, partition = topic_partitions[last_index]
             group_assignment[member_id].assign(topic, [partition])
+            last_index += 1
           end
         end
 
@@ -97,7 +109,18 @@ module Kafka
         instance_family, _ = instance_type.split(".")
 
         capacity = weights.dig(az, instance_family) || weights.dig(instance_family, az)
-        capacity || instance_family_to_capacity.fetch(instance_family, 1) * az_to_capacity.fetch(az, 1)
+        (capacity || instance_family_to_capacity.fetch(instance_family, 1) * az_to_capacity.fetch(az, 1)).to_f
+      end
+
+      def build_partition_weights(topics)
+        # Duplicate the weights to not destruct @partition_weights or the return value of @partition_weights
+        weights = (@partition_weights.is_a?(Proc) ? @partition_weights.call() : @partition_weights).dup
+        topics.each do |t|
+          weights[t] = weights[t].dup || {}
+          weights[t].default = 1
+        end
+
+        weights
       end
     end
   end

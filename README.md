@@ -118,6 +118,17 @@ assignment_strategy_factory = Kafka::EC2::MixedInstanceAssignmentStrategyFactory
 )
 ```
 
+The strategy also has the option `partition_weights`. This is useful when the topic has some skewed partitions. Suppose the partition with ID 0 of the topic "foo" receives twice as many records as other partitions. To reduce the number of partitions assigned to the consumer that consumes the partition with ID 0, specify `partition_weights` like below:
+
+```ruby
+assignment_strategy_factory = Kafka::EC2::MixedInstanceAssignmentStrategyFactory.new(
+  partition_weights: {
+    "foo" => {
+      0 => 2,
+    },
+  }
+)
+```
 
 ## Development
 
