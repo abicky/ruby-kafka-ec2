@@ -324,6 +324,25 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
           expect(group_assignment.values.flat_map { |a| a.topics.keys }).to match_array(["topic"] * member_id_to_metadata.size)
         end
       end
+
+      context "with too large weight" do
+        let(:strategy) do
+          described_class.new(
+            cluster: cluster,
+            partition_weights: {
+              "topic" => {
+                0 => 100,
+              }
+            }
+          )
+        end
+
+        it "assigns partitions to members considering partition weights" do
+          expect(group_assignment.values.flat_map { |a| a.topics["topic"] }.compact.uniq.size).to eq partition_ids.size
+          expect(group_assignment.map { |_, a| a.topics["topic"].size }).to match_array([1, 25, 25, 25, 24])
+          expect(group_assignment.values.flat_map { |a| a.topics.keys }).to match_array(["topic"] * member_id_to_metadata.size)
+        end
+      end
     end
   end
 end

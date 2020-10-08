@@ -74,28 +74,29 @@ module Kafka
           member_ids = instance_id_to_member_ids[instance_id]
           member_ids.each do |member_id|
             acceptable_partition_weight = capacity * partition_weight_per_capacity / member_ids.size
-            loop do
+            while last_index < topic_partitions.size
               topic, partition = topic_partitions[last_index]
               partition_weight = partition_weights.dig(topic, partition)
-              if last_index == topic_partitions.size || acceptable_partition_weight - partition_weight < 0
-                member_id_to_acceptable_partition_weight[member_id] = acceptable_partition_weight
-                break
-              end
+              break if acceptable_partition_weight - partition_weight < 0
 
               group_assignment[member_id].assign(topic, [partition])
-              last_index += 1
               acceptable_partition_weight -= partition_weight
+
+              last_index += 1
             end
+
+            member_id_to_acceptable_partition_weight[member_id] = acceptable_partition_weight
           end
         end
 
-        if last_index < topic_partitions.size
-          member_id_to_acceptable_partition_weight.sort_by { |_, remaining| -remaining }.each do |member_id, _|
-            topic, partition = topic_partitions[last_index]
-            group_assignment[member_id].assign(topic, [partition])
-            last_index += 1
-            break if last_index == topic_partitions.size
-          end
+        while last_index < topic_partitions.size
+          member_id, _ = member_id_to_acceptable_partition_weight.max_by { |_, remaining| remaining }
+          topic, partition = topic_partitions[last_index]
+          group_assignment[member_id].assign(topic, [partition])
+
+          member_id_to_acceptable_partition_weight[member_id] -= partition_weights.dig(topic, partition)
+
+          last_index += 1
         end
 
         group_assignment
