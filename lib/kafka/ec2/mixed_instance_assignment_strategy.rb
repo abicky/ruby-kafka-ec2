@@ -94,6 +94,7 @@ module Kafka
             topic, partition = topic_partitions[last_index]
             group_assignment[member_id].assign(topic, [partition])
             last_index += 1
+            break if last_index == topic_partitions.size
           end
         end
 

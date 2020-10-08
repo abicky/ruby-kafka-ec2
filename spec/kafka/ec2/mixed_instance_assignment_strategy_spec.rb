@@ -91,6 +91,7 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
         it "assigns partitions to members considering their instance types and availability zones" do
           expect(group_assignment.values.flat_map { |a| a.topics["topic"] }.compact.uniq.size).to eq partition_ids.size
           expect(group_assignment.map { |id, a| [id, a.topics["topic"].size] }.to_h).to eq(expected_partition_count)
+          expect(group_assignment.values.flat_map { |a| a.topics.keys }).to match_array(["topic"] * member_id_to_metadata.size)
         end
       end
 
@@ -127,8 +128,9 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
         it "assigns partitions to members without omissions" do
           expect(group_assignment.values.flat_map { |a| a.topics["topic"] }.compact.uniq.size).to eq partition_ids.size
 
-          expect(group_assignment.keys).to match_array(["0000-r4-a-0000", "0000-r4-a-0001", "0000-r4-a-0002"])
+          expect(group_assignment.keys).to match_array(member_id_to_metadata.keys)
           expect(group_assignment.values.map { |a| a.topics["topic"].size }).to match_array([4, 3, 3])
+          expect(group_assignment.values.flat_map { |a| a.topics.keys }).to match_array(["topic"] * member_id_to_metadata.size)
         end
       end
     end
@@ -220,6 +222,7 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
         it "assigns partitions to members considering their instance types and availability zones" do
           expect(group_assignment.values.flat_map { |a| a.topics["topic"] }.compact.uniq.size).to eq partition_ids.size
           expect(group_assignment.map { |id, a| [id, a.topics["topic"].size] }.to_h).to eq(expected_partition_count)
+          expect(group_assignment.values.flat_map { |a| a.topics.keys }).to match_array(["topic"] * member_id_to_metadata.size)
         end
       end
 
@@ -247,6 +250,7 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
         it "assigns partitions to members considering their instance types and availability zones" do
           expect(group_assignment.values.flat_map { |a| a.topics["topic"] }.compact.uniq.size).to eq partition_ids.size
           expect(group_assignment.map { |id, a| [id, a.topics["topic"].size] }.to_h).to eq(expected_partition_count)
+          expect(group_assignment.values.flat_map { |a| a.topics.keys }).to match_array(["topic"] * member_id_to_metadata.size)
         end
       end
     end
@@ -292,6 +296,7 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
         it "assigns partitions to members considering partition weights" do
           expect(group_assignment.values.flat_map { |a| a.topics["topic"] }.compact.uniq.size).to eq partition_ids.size
           expect(group_assignment.map { |id, a| [id, a.topics["topic"].size] }.to_h).to eq(expected_partition_count)
+          expect(group_assignment.values.flat_map { |a| a.topics.keys }).to match_array(["topic"] * member_id_to_metadata.size)
         end
       end
 
@@ -316,6 +321,7 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
         it "assigns partitions to members considering partition weights" do
           expect(group_assignment.values.flat_map { |a| a.topics["topic"] }.compact.uniq.size).to eq partition_ids.size
           expect(group_assignment.map { |id, a| [id, a.topics["topic"].size] }.to_h).to eq(expected_partition_count)
+          expect(group_assignment.values.flat_map { |a| a.topics.keys }).to match_array(["topic"] * member_id_to_metadata.size)
         end
       end
     end
