@@ -344,5 +344,62 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
         end
       end
     end
+
+    context "with the same weights" do
+      let(:strategy) do
+        described_class.new(
+          cluster: cluster,
+          instance_family_weights: {
+            "m5" => 1,
+            "c5" => 1,
+          },
+          availability_zone_weights: ->() {
+            {
+              "ap-northeast-1a" => 1,
+              "ap-northeast-1c" => 1,
+            }
+          },
+        )
+      end
+
+      let(:partition_ids) { (0 .. 14).to_a }
+      let(:member_id_to_metadata) do
+        {
+          # Instance which has five members
+          "0000-c5-a-0000" => "i-00000000000000000,c5.xlarge,ap-northeast-1a",
+          "0000-c5-a-0001" => "i-00000000000000000,c5.xlarge,ap-northeast-1a",
+          "0000-c5-a-0002" => "i-00000000000000000,c5.xlarge,ap-northeast-1a",
+          "0000-c5-a-0003" => "i-00000000000000000,c5.xlarge,ap-northeast-1a",
+          "0000-c5-a-0004" => "i-00000000000000000,c5.xlarge,ap-northeast-1a",
+          # Instances which have one member
+          "0001-m5-c-0000" => "i-00000000000000001,m5.xlarge,ap-northeast-1c",
+          "0002-m5-c-0000" => "i-00000000000000002,m5.xlarge,ap-northeast-1c",
+          "0003-m5-c-0000" => "i-00000000000000003,m5.xlarge,ap-northeast-1c",
+          "0004-m5-c-0000" => "i-00000000000000004,m5.xlarge,ap-northeast-1c",
+          "0005-m5-c-0000" => "i-00000000000000005,m5.xlarge,ap-northeast-1c",
+        }
+      end
+
+      let(:expected_partition_count) do
+        {
+          "0000-c5-a-0000" => 2,
+          "0000-c5-a-0001" => 2,
+          "0000-c5-a-0002" => 2,
+          "0000-c5-a-0003" => 1,
+          "0000-c5-a-0004" => 1,
+          "0001-m5-c-0000" => 2,
+          "0002-m5-c-0000" => 2,
+          "0003-m5-c-0000" => 1,
+          "0004-m5-c-0000" => 1,
+          "0005-m5-c-0000" => 1,
+        }
+      end
+
+      it "assigns partitions considering instance capacity" do
+        expect(group_assignment.values.flat_map { |a| a.topics["topic"] }.compact.uniq.size).to eq partition_ids.size
+        expect(group_assignment.map { |id, a| [id, a.topics["topic"].size] }.to_h).to eq(expected_partition_count)
+        expect(group_assignment.values.flat_map { |a| a.topics.keys }).to match_array(["topic"] * member_id_to_metadata.size)
+      end
+    end
   end
 end
