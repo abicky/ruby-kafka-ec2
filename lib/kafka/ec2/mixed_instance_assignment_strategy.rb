@@ -42,6 +42,7 @@ module Kafka
         instance_id_to_capacity = Hash.new(0)
         instance_id_to_member_ids = Hash.new { |h, k| h[k] = [] }
         total_capacity = 0
+        member_id_to_instance_id = {}
 
         instance_family_to_capacity = @instance_family_weights.is_a?(Proc) ? @instance_family_weights.call() : @instance_family_weights
         az_to_capacity = @availability_zone_weights.is_a?(Proc) ? @availability_zone_weights.call() : @availability_zone_weights
@@ -51,6 +52,7 @@ module Kafka
 
           instance_id, instance_type, az = member_id_to_metadata[member_id].split(",")
           instance_id_to_member_ids[instance_id] << member_id
+          member_id_to_instance_id[member_id] = instance_id
           capacity = calculate_capacity(instance_type, az, instance_family_to_capacity, az_to_capacity, weights)
           instance_id_to_capacity[instance_id] += capacity
           total_capacity += capacity
@@ -70,6 +72,7 @@ module Kafka
 
         last_index = 0
         member_id_to_acceptable_partition_weight = {}
+        instance_id_to_total_acceptable_partition_weight = Hash.new(0)
         instance_id_to_capacity.each do |instance_id, capacity|
           member_ids = instance_id_to_member_ids[instance_id]
           member_ids.each do |member_id|
@@ -86,15 +89,24 @@ module Kafka
             end
 
             member_id_to_acceptable_partition_weight[member_id] = acceptable_partition_weight
+            instance_id_to_total_acceptable_partition_weight[instance_id] += acceptable_partition_weight
           end
         end
 
         while last_index < topic_partitions.size
-          member_id, _ = member_id_to_acceptable_partition_weight.max_by { |_, remaining| remaining }
+          max_acceptable_partition_weight = member_id_to_acceptable_partition_weight.values.max
+          member_ids = member_id_to_acceptable_partition_weight.select { |_, w| w == max_acceptable_partition_weight }.keys
+          if member_ids.size == 1
+            member_id = member_ids.first
+          else
+            member_id =  member_ids.max_by { |id| instance_id_to_total_acceptable_partition_weight[member_id_to_instance_id[id]] }
+          end
           topic, partition = topic_partitions[last_index]
           group_assignment[member_id].assign(topic, [partition])
 
-          member_id_to_acceptable_partition_weight[member_id] -= partition_weights.dig(topic, partition)
+          partition_weight = partition_weights.dig(topic, partition)
+          member_id_to_acceptable_partition_weight[member_id] -= partition_weight
+          instance_id_to_total_acceptable_partition_weight[member_id_to_instance_id[member_id]] -= partition_weight
 
           last_index += 1
         end
