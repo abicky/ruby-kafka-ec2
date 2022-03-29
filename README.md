@@ -24,9 +24,9 @@ Or install it yourself as:
 
 ### Kafka::EC2::MixedInstanceAssignmentStrategy
 
-`Kafka::EC2::MixedInstanceAssignmentStrategy` is an assignor for auto-scaling groups with mixed instance policies. The throughputs of consumers usually depend on instance families and availability zones. For example, if your application writes data to a database, the throughputs of consumers running on the same availability zone as the writer DB instance is higher.
+`Kafka::EC2::MixedInstanceAssignmentStrategy` is an assignor for auto-scaling groups with mixed instance policies. The throughputs of consumers usually depend on instance families and availability zones. For example, if your application writes data to a database, the throughputs of consumers running on the same availability zone as that of the writer DB instance is higher.
 
-To assign more partitions to consumers with high throughputs, you have to define `Kafka::EC2::MixedInstanceAssignmentStrategyFactory` first like below:
+To assign more partitions to consumers with high throughputs, you have to initialize `Kafka::EC2::MixedInstanceAssignmentStrategy` first like below:
 
 ```ruby
 require "aws-sdk-rds"
@@ -34,7 +34,7 @@ require "kafka"
 require "kafka/ec2"
 
 rds = Aws::RDS::Client.new(region: "ap-northeast-1")
-assignment_strategy_factory = Kafka::EC2::MixedInstanceAssignmentStrategyFactory.new(
+assignment_strategy = Kafka::EC2::MixedInstanceAssignmentStrategy.new(
   instance_family_weights: {
     "r4" => 1.00,
     "r5" => 1.20,
@@ -68,19 +68,17 @@ assignment_strategy_factory = Kafka::EC2::MixedInstanceAssignmentStrategyFactory
 
 In the preceding example, consumers running on c5 instances will have 1.5x as many partitions compared to consumers running on r4 instances. In a similar way, if the writer DB instance is in ap-northeast-1a, consumers in ap-northeast-1a will have 4x as many partitions compared to consumers in ap-northeast-1c.
 
-You can use `Kafka::EC2::MixedInstanceAssignmentStrategy` by specifying the factory to `Kafka::EC2.with_assignment_strategy_factory` and creating a consumer in the block:
+You can use `Kafka::EC2::MixedInstanceAssignmentStrategy` by specifying it to `Kafka#consumer`:
 
 
 ```ruby
-consumer = Kafka::EC2.with_assignment_strategy_factory(assignment_strategy_factory) do
-  kafka.consumer(group_id: ENV["KAFKA_CONSUMER_GROUP_ID"])
-end
+consumer = kafka.consumer(group_id: ENV["KAFKA_CONSUMER_GROUP_ID"], assignment_strategy: assignment_strategy)
 ```
 
 You can also specify weights for each combination of availability zones and instance families:
 
 ```ruby
-assignment_strategy_factory = Kafka::EC2::MixedInstanceAssignmentStrategyFactory.new(
+assignment_strategy = Kafka::EC2::MixedInstanceAssignmentStrategy.new(
   weights: ->() {
     db_cluster = rds.describe_db_clusters(filters: [
       { name: "db-cluster-id", values: [ENV["RDS_CLUSTER"]] },
@@ -121,7 +119,7 @@ assignment_strategy_factory = Kafka::EC2::MixedInstanceAssignmentStrategyFactory
 The strategy also has the option `partition_weights`. This is useful when the topic has some skewed partitions. Suppose the partition with ID 0 of the topic "foo" receives twice as many records as other partitions. To reduce the number of partitions assigned to the consumer that consumes the partition with ID 0, specify `partition_weights` like below:
 
 ```ruby
-assignment_strategy_factory = Kafka::EC2::MixedInstanceAssignmentStrategyFactory.new(
+assignment_strategy = Kafka::EC2::MixedInstanceAssignmentStrategy.new(
   partition_weights: {
     "foo" => {
       0 => 2,

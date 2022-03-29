@@ -1,28 +1,85 @@
 require "spec_helper"
+require "kafka/consumer_group/assignor"
+require "kafka/protocol/join_group_response"
 
 RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
   let(:cluster) do
     instance_double("Kafka::Cluster")
   end
 
-  describe "#assign" do
-    subject(:group_assignment) { strategy.assign(members: members, topics: ["topic"]) }
+  describe "behavior as an assignor" do
+    let(:kafka) { Kafka.new(["localhost:9092"], client_id: "net.abicky.ruby-kafka-ec2") }
+    let(:kafka_topic) { ENV["KAFKA_TOPIC"] }
+    let(:key_prefix) { Time.now.to_i.to_s }
+    let(:partition_count) { 3 }
 
-    let(:members) { member_id_to_metadata.keys }
+    let(:instance_id) { "i-00000000000000000" }
+    let(:instance_type) { "c5.xlarge" }
+    let(:availability_zone) { "ap-northeast-1a" }
 
     before do
-      allow(cluster).to receive(:partitions_for) do
-        partition_ids.map do |partition_id|
-          instance_double("Kafka::Protocol::MetadataResponse::PartitionMetadata", partition_id: partition_id)
-        end
+      WebMock.disable_net_connect!(allow_localhost: true)
+      stub_request(:get, "169.254.169.254/latest/meta-data/instance-id").to_return(body: instance_id)
+      stub_request(:get, "169.254.169.254/latest/meta-data/instance-type").to_return(body: instance_type)
+      stub_request(:get, "169.254.169.254/latest/meta-data/placement/availability-zone").to_return(body: availability_zone)
+
+      unless kafka.topics.include?(kafka_topic) # Don't use kafka.has_topic(kafka_topic) because it creates the topic
+        kafka.create_topic(kafka_topic, num_partitions: partition_count)
       end
-      strategy.member_id_to_metadata = member_id_to_metadata
+
+      partition_count.times do |i|
+        kafka.deliver_message(i.to_s, topic: kafka_topic, key: "#{key_prefix}_#{i}", partition: i)
+      end
+    end
+
+    it "consumes messages correctly", kafka: true do
+      assignment_strategy = Kafka::EC2::MixedInstanceAssignmentStrategy.new(
+        instance_family_weights: {
+          "r4" => 1,
+          "r5" => 1.08,
+          "m5" => 1.13,
+          "c5" => 1.25,
+        },
+        availability_zone_weights: ->() {
+          {
+            "ap-northeast-1a" => 1,
+            "ap-northeast-1c" => 0.9,
+          }
+        },
+      )
+      expect(assignment_strategy).to receive(:call).and_wrap_original do |m, cluster:, members:, partitions:|
+        expect(members.values.first.user_data).to eq [instance_id, instance_type, availability_zone].join(",")
+        m.call(cluster: cluster, members: members, partitions: partitions)
+      end
+
+      consumer = kafka.consumer(group_id: "net.abicky.ruby-kafka-ec2.rspec", assignment_strategy: assignment_strategy)
+      consumer.subscribe(kafka_topic)
+
+      received_messages = []
+      consumer.each_message do |message|
+        received_messages << message.value if message.key.start_with?(key_prefix)
+        consumer.stop if received_messages.size == partition_count
+      end
+      expect(received_messages).to match_array(partition_count.times.map(&:to_s))
+    end
+  end
+
+  describe "#call" do
+    subject(:member_id_to_partitions) { strategy.call(cluster: cluster, members: members, partitions: partitions) }
+
+    let(:members) do
+      member_id_to_userdata.transform_values do |v|
+        Kafka::Protocol::JoinGroupResponse::Metadata.new(0, "topic", v)
+      end
+    end
+
+    let(:partitions) do
+      partition_ids.map { |id| Kafka::ConsumerGroup::Assignor::Partition.new("topic", id) }
     end
 
     context "with instance_family_weights and availability_zone_weights" do
       let(:strategy) do
         described_class.new(
-          cluster: cluster,
           instance_family_weights: {
             "r4" => 1,
             "r5" => 1.08,
@@ -40,7 +97,7 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
 
       context "with various instances" do
         let(:partition_ids) { (0 .. 500).to_a }
-        let(:member_id_to_metadata) do
+        let(:member_id_to_userdata) do
           {
             # Instances which have two members
             "0000-c5-a-0000" => "i-00000000000000000,c5.xlarge,ap-northeast-1a",
@@ -89,9 +146,9 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
         end
 
         it "assigns partitions to members considering their instance types and availability zones" do
-          expect(group_assignment.values.flat_map { |a| a.topics["topic"] }.compact.uniq.size).to eq partition_ids.size
-          expect(group_assignment.map { |id, a| [id, a.topics["topic"].size] }.to_h).to eq(expected_partition_count)
-          expect(group_assignment.values.flat_map { |a| a.topics.keys }).to match_array(["topic"] * member_id_to_metadata.size)
+          expect(member_id_to_partitions.flat_map { |_, a| a.map(&:partition_id) }).to match_array(partition_ids)
+          expect(member_id_to_partitions.transform_values(&:size)).to eq(expected_partition_count)
+          expect(member_id_to_partitions.flat_map { |_, a| a.map(&:topic) }).to match_array(["topic"] * partition_ids.size)
         end
       end
 
@@ -100,7 +157,7 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
           [0]
         end
 
-        let(:member_id_to_metadata) do
+        let(:member_id_to_userdata) do
           {
             "0000-c5-a-0000" => "i-00000000000000000,c5.xlarge,ap-northeast-1a",
             "0001-m5-a-0000" => "i-00000000000000001,m5.xlarge,ap-northeast-1a",
@@ -108,16 +165,16 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
         end
 
         it "assigns the partition to the member with the highest capacity" do
-          expect(group_assignment.values.flat_map { |a| a.topics["topic"] }.compact.uniq.size).to eq partition_ids.size
+          expect(member_id_to_partitions.flat_map { |_, a| a.map(&:partition_id) }).to match_array(partition_ids)
 
-          expect(group_assignment["0000-c5-a-0000"].topics["topic"].size).to eq 1
-          expect(group_assignment["0001-m5-a-0000"].topics["topic"]).to be_nil
+          expect(member_id_to_partitions["0000-c5-a-0000"].size).to eq 1
+          expect(member_id_to_partitions["0001-m5-a-0000"]).to eq []
         end
       end
 
       context "when the sum of (capacity * partition_count_per_capacity).round is less than the partition count" do
         let(:partition_ids) { (0 .. 9).to_a }
-        let(:member_id_to_metadata) do
+        let(:member_id_to_userdata) do
           {
             "0000-r4-a-0000" => "i-00000000000000000,r4.xlarge,ap-northeast-1a",
             "0000-r4-a-0001" => "i-00000000000000001,r4.xlarge,ap-northeast-1a",
@@ -126,11 +183,11 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
         end
 
         it "assigns partitions to members without omissions" do
-          expect(group_assignment.values.flat_map { |a| a.topics["topic"] }.compact.uniq.size).to eq partition_ids.size
+          expect(member_id_to_partitions.flat_map { |_, a| a.map(&:partition_id) }).to match_array(partition_ids)
 
-          expect(group_assignment.keys).to match_array(member_id_to_metadata.keys)
-          expect(group_assignment.values.map { |a| a.topics["topic"].size }).to match_array([4, 3, 3])
-          expect(group_assignment.values.flat_map { |a| a.topics.keys }).to match_array(["topic"] * member_id_to_metadata.size)
+          expect(member_id_to_partitions.keys).to match_array(member_id_to_userdata.keys)
+          expect(member_id_to_partitions.values.map(&:size)).to match_array([4, 3, 3])
+          expect(member_id_to_partitions.flat_map { |_, a| a.map(&:topic) }).to match_array(["topic"] * partition_ids.size)
         end
       end
     end
@@ -146,7 +203,7 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
       #   c5: 15 msec
 
       let(:partition_ids) { (0 .. 500).to_a }
-      let(:member_id_to_metadata) do
+      let(:member_id_to_userdata) do
         {
           # Instances which have two members
           "0000-c5-a-0000" => "i-00000000000000000,c5.xlarge,ap-northeast-1a",
@@ -197,7 +254,6 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
       context "with availability zone keys" do
         let(:strategy) do
           described_class.new(
-            cluster: cluster,
             weights: {
               "r4" => {
                 "ap-northeast-1a" => 1.000,
@@ -220,16 +276,15 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
         end
 
         it "assigns partitions to members considering their instance types and availability zones" do
-          expect(group_assignment.values.flat_map { |a| a.topics["topic"] }.compact.uniq.size).to eq partition_ids.size
-          expect(group_assignment.map { |id, a| [id, a.topics["topic"].size] }.to_h).to eq(expected_partition_count)
-          expect(group_assignment.values.flat_map { |a| a.topics.keys }).to match_array(["topic"] * member_id_to_metadata.size)
+          expect(member_id_to_partitions.flat_map { |_, a| a.map(&:partition_id) }).to match_array(partition_ids)
+          expect(member_id_to_partitions.transform_values(&:size)).to eq(expected_partition_count)
+          expect(member_id_to_partitions.flat_map { |_, a| a.map(&:topic) }).to match_array(["topic"] * partition_ids.size)
         end
       end
 
       context "with availability zone keys" do
         let(:strategy) do
           described_class.new(
-            cluster: cluster,
             weights: {
               "ap-northeast-1a" => {
                 "r4" => 1.000,
@@ -248,16 +303,16 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
         end
 
         it "assigns partitions to members considering their instance types and availability zones" do
-          expect(group_assignment.values.flat_map { |a| a.topics["topic"] }.compact.uniq.size).to eq partition_ids.size
-          expect(group_assignment.map { |id, a| [id, a.topics["topic"].size] }.to_h).to eq(expected_partition_count)
-          expect(group_assignment.values.flat_map { |a| a.topics.keys }).to match_array(["topic"] * member_id_to_metadata.size)
+          expect(member_id_to_partitions.flat_map { |_, a| a.map(&:partition_id) }).to match_array(partition_ids)
+          expect(member_id_to_partitions.transform_values(&:size)).to eq(expected_partition_count)
+          expect(member_id_to_partitions.flat_map { |_, a| a.map(&:topic) }).to match_array(["topic"] * partition_ids.size)
         end
       end
     end
 
     context "with partition_weights" do
       let(:partition_ids) { (0 .. 99).to_a }
-      let(:member_id_to_metadata) do
+      let(:member_id_to_userdata) do
         {
           "0000-c5-a-0000" => "i-00000000000000000,c5.xlarge,ap-northeast-1a",
           "0001-m5-a-0000" => "i-00000000000000001,m5.xlarge,ap-northeast-1a",
@@ -280,7 +335,6 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
       context "with partition_weights hash" do
         let(:strategy) do
           described_class.new(
-            cluster: cluster,
             partition_weights: {
               "topic" => {
                 0 => 2,
@@ -294,16 +348,15 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
         end
 
         it "assigns partitions to members considering partition weights" do
-          expect(group_assignment.values.flat_map { |a| a.topics["topic"] }.compact.uniq.size).to eq partition_ids.size
-          expect(group_assignment.map { |id, a| [id, a.topics["topic"].size] }.to_h).to eq(expected_partition_count)
-          expect(group_assignment.values.flat_map { |a| a.topics.keys }).to match_array(["topic"] * member_id_to_metadata.size)
+          expect(member_id_to_partitions.flat_map { |_, a| a.map(&:partition_id) }).to match_array(partition_ids)
+          expect(member_id_to_partitions.transform_values(&:size)).to eq(expected_partition_count)
+          expect(member_id_to_partitions.flat_map { |_, a| a.map(&:topic) }).to match_array(["topic"] * partition_ids.size)
         end
       end
 
       context "with partition_weights proc" do
         let(:strategy) do
           described_class.new(
-            cluster: cluster,
             partition_weights: ->() {
               {
                 "topic" => {
@@ -319,16 +372,15 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
         end
 
         it "assigns partitions to members considering partition weights" do
-          expect(group_assignment.values.flat_map { |a| a.topics["topic"] }.compact.uniq.size).to eq partition_ids.size
-          expect(group_assignment.map { |id, a| [id, a.topics["topic"].size] }.to_h).to eq(expected_partition_count)
-          expect(group_assignment.values.flat_map { |a| a.topics.keys }).to match_array(["topic"] * member_id_to_metadata.size)
+          expect(member_id_to_partitions.flat_map { |_, a| a.map(&:partition_id) }).to match_array(partition_ids)
+          expect(member_id_to_partitions.transform_values(&:size)).to eq(expected_partition_count)
+          expect(member_id_to_partitions.flat_map { |_, a| a.map(&:topic) }).to match_array(["topic"] * partition_ids.size)
         end
       end
 
       context "with too large weight" do
         let(:strategy) do
           described_class.new(
-            cluster: cluster,
             partition_weights: {
               "topic" => {
                 0 => 100,
@@ -338,9 +390,9 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
         end
 
         it "assigns partitions to members considering partition weights" do
-          expect(group_assignment.values.flat_map { |a| a.topics["topic"] }.compact.uniq.size).to eq partition_ids.size
-          expect(group_assignment.map { |_, a| a.topics["topic"].size }).to match_array([1, 25, 25, 25, 24])
-          expect(group_assignment.values.flat_map { |a| a.topics.keys }).to match_array(["topic"] * member_id_to_metadata.size)
+          expect(member_id_to_partitions.keys).to match_array(member_id_to_userdata.keys)
+          expect(member_id_to_partitions.values.map(&:size)).to match_array([1, 25, 25, 25, 24])
+          expect(member_id_to_partitions.flat_map { |_, a| a.map(&:topic) }).to match_array(["topic"] * partition_ids.size)
         end
       end
     end
@@ -348,7 +400,6 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
     context "with the same weights" do
       let(:strategy) do
         described_class.new(
-          cluster: cluster,
           instance_family_weights: {
             "m5" => 1,
             "c5" => 1,
@@ -363,7 +414,7 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
       end
 
       let(:partition_ids) { (0 .. 14).to_a }
-      let(:member_id_to_metadata) do
+      let(:member_id_to_userdata) do
         {
           # Instance which has five members
           "0000-c5-a-0000" => "i-00000000000000000,c5.xlarge,ap-northeast-1a",
@@ -396,9 +447,9 @@ RSpec.describe Kafka::EC2::MixedInstanceAssignmentStrategy do
       end
 
       it "assigns partitions considering instance capacity" do
-        expect(group_assignment.values.flat_map { |a| a.topics["topic"] }.compact.uniq.size).to eq partition_ids.size
-        expect(group_assignment.map { |id, a| [id, a.topics["topic"].size] }.to_h).to eq(expected_partition_count)
-        expect(group_assignment.values.flat_map { |a| a.topics.keys }).to match_array(["topic"] * member_id_to_metadata.size)
+        expect(member_id_to_partitions.flat_map { |_, a| a.map(&:partition_id) }).to match_array(partition_ids)
+        expect(member_id_to_partitions.transform_values(&:size)).to eq(expected_partition_count)
+        expect(member_id_to_partitions.flat_map { |_, a| a.map(&:topic) }).to match_array(["topic"] * partition_ids.size)
       end
     end
   end
